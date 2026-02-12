@@ -1,9 +1,9 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from fastapi import FastAPI, HTTPException, Request, Depends
-from typing import Any,Annotated, Generic, TypeVar
+from fastapi import FastAPI, HTTPException, Query, Request, Depends
+from typing import Any,Annotated, Generic, Optional, TypeVar
 from random import randint
-from sqlmodel import create_engine, SQLModel, Session, select, Field
+from sqlmodel import create_engine, SQLModel, Session, func, select, Field
 from pydantic import BaseModel
 
 
@@ -89,12 +89,42 @@ T = TypeVar("T")
 class Response(BaseModel, Generic[T]):
     data: T
 
-#square brackets show type all in here, before we were using ist of type campaign
 
-@app.get("/campaigns", response_model=Response[list[Campaign]])
-async def read_campaigns(session: SessionDependency):#session dependency has to be passed to enable the access of db
-    data = session.exec(select(Campaign)).all()
-    return {"data": data}
+class PaginatedResponse(BaseModel,Generic[T]):
+     #custome response
+     data:T
+     next:Optional[str]
+     prev:Optional[str]
+     count:int
+
+# square brackets show type all in here, before we were using ist of type campaign
+
+@app.get("/campaigns", response_model=PaginatedResponse[list[Campaign]])
+async def read_campaigns(request: Request, session: SessionDependency, page:int = Query(1, ge=1), page_size: int =Query(20, ge=1)):#session dependency has to be passed to enable the access of db
+    print(page)
+    limit = page_size
+    offset = (page-1)*limit
+    data = session.exec(select(Campaign).order_by(Campaign.campaign_id).offset(offset).limit(limit)).all()
+
+    base_url = str(request.url).split('?')
+
+    total = session.exec(select(func.count()).select_from(Campaign)).one()
+    #see now this query is basically touching all the rows, might make us slow, thus we can take another approach i.e., completely getting rid of total and letting the query run like this, and depending on the db, it might take us to an empty page for next_url but cool
+    if offset + limit < total:
+        next_url = f"{base_url}?page={page+1}&page_size={limit}"
+    else:
+        next_url = None
+    
+    if page>1:
+        prev_url = f"{base_url}?page={page-1}&page_size={limit}"
+    else:
+        prev_url=None
+    return {
+        "count":total,
+        "next":next_url,
+        "prev":prev_url,
+        "data": data
+    }
 
 @app.get("/campaigns/{id}", response_model=Response[Campaign])
 async def read_campaign(id: int, session: SessionDependency):
