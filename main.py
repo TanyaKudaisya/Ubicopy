@@ -10,7 +10,7 @@ from pydantic import BaseModel
 #data types creation------------------------------- basically the model we'll be using
 
 class Campaign(SQLModel, table=True): # this one is connected to the base table that is why true
-    campaign_id: int |None = Field(default=None, primary_key=True)
+    campaign_id: int = Field(default=None, primary_key=True)
     name: str = Field(index=True)
     due_date: datetime | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory= lambda:datetime.now(timezone.utc), nullable=True, index=True) 
@@ -94,29 +94,24 @@ class PaginatedResponse(BaseModel,Generic[T]):
      #custome response
      data:T
      next:Optional[str]
-     prev:Optional[str]
+    #  prev:Optional[str]
     #  count:int
 
 # square brackets show type all in here, before we were using ist of type campaign
 
 @app.get("/campaigns", response_model=PaginatedResponse[list[Campaign]])
-async def read_campaigns(request: Request, session: SessionDependency, offset:int = Query(0, ge=0), limit: int =Query(20, ge=1)):#session dependency has to be passed to enable the access of db
+async def read_campaigns(request: Request, session: SessionDependency, cursor:int = Query(0, ge=0), limit: int =Query(20, ge=1)):#session dependency has to be passed to enable the access of db
     
-    data = session.exec(select(Campaign).order_by(Campaign.campaign_id).offset(offset).limit(limit)).all()
+    data = session.exec(select(Campaign).order_by(Campaign.campaign_id).where(Campaign.campaign_id>cursor).limit(limit)).all()
 
     base_url = str(request.url).split('?')[0]
+
+    next_url = f"{base_url}?cursor={data[-1].campaign_id}&limit={limit}"
     
-    next_url = f"{base_url}?offset={offset+limit}&limit={limit}"
-    
-    
-    if offset>1:
-        prev_url = f"{base_url}?offset={max(max(0,offset-limit))}&limit={limit}"
-    else:
-        prev_url=None
     return {
         # "count":total,
         "next":next_url,
-        "prev":prev_url,
+        # "prev":prev_url,
         "data": data
     }
 
