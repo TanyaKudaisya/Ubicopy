@@ -1,5 +1,7 @@
+import base64
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import json
 from fastapi import FastAPI, HTTPException, Query, Request, Depends
 from typing import Any,Annotated, Generic, Optional, TypeVar
 from random import randint
@@ -96,23 +98,40 @@ class PaginatedResponse(BaseModel,Generic[T]):
      next:Optional[str]
     #  prev:Optional[str]
     #  count:int
+def encode_cursor(value):
+    raw = json.dumps({"id":value})
+    return base64.urlsafe_b64encode(raw.encode()).decode() #the func was econding raw, but string doesn't get encoded thus raw is passed in binary format, and again decoded in string
+
+def decode_cursor(cursor):
+    raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+    payload = json.loads(raw)
+    return payload.get("id")
 
 # square brackets show type all in here, before we were using ist of type campaign
 
 @app.get("/campaigns", response_model=PaginatedResponse[list[Campaign]])
-async def read_campaigns(request: Request, session: SessionDependency, cursor:int = Query(0, ge=0), limit: int =Query(20, ge=1)):#session dependency has to be passed to enable the access of db
-    
-    data = session.exec(select(Campaign).order_by(Campaign.campaign_id).where(Campaign.campaign_id>cursor).limit(limit)).all()
+async def read_campaigns(request: Request, session: SessionDependency, cursor:Optional[str] = Query(None), limit: int =Query(20, ge=1)):#session dependency has to be passed to enable the access of db
+    cursor_id = 0
+
+    if cursor:
+        cursor_id=decode_cursor(cursor)
+
+    data = session.exec(select(Campaign).order_by(Campaign.campaign_id).where(Campaign.campaign_id>cursor_id).limit(limit+1)).all()
 
     base_url = str(request.url).split('?')[0]
 
-    next_url = f"{base_url}?cursor={data[-1].campaign_id}&limit={limit}"
+    next_url = None
+
+    if len(data)>limit:
+        next_cursor = encode_cursor(data[:limit][-1].campaign_id)
+        next_url = f"{base_url}?cursor={next_cursor}&limit={limit}"
+   
     
     return {
         # "count":total,
         "next":next_url,
         # "prev":prev_url,
-        "data": data
+        "data": data[:limit]
     }
 
 @app.get("/campaigns/{id}", response_model=Response[Campaign])
